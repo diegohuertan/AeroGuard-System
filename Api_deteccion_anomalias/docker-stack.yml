@@ -1,0 +1,77 @@
+version: '3.8'
+
+services:
+  # --- DATOS (Redis con Sentinel) ---
+  redis-master:
+    image: redis/redis-stack:7.2.0-v9
+    hostname: redis-master
+    command: >
+      bash -c "redis-server --loadmodule /opt/redis-stack/lib/redistimeseries.so 
+      --appendonly yes --requirepass supersecret"
+    networks:
+      - industrial-net
+    deploy:
+      placement:
+        constraints: [node.role == worker] # Preferimos que los datos estén en workers
+
+  redis-replica:
+    image: redis/redis-stack:7.2.0-v9
+    hostname: redis-replica
+    command: >
+      bash -c "redis-server --loadmodule /opt/redis-stack/lib/redistimeseries.so 
+      --appendonly yes --replicaof redis-master 6379 --masterauth supersecret --requirepass supersecret"
+    networks:
+      - industrial-net
+    deploy:
+      replicas: 1
+      placement:
+        constraints: [node.role == manager] # Separamos física la réplica del maestro
+
+  sentinel:
+    image: redis/redis-stack:7.2.0-v9
+    deploy:
+      mode: global # ¡Magia! Esto pone UN centinela en CADA máquina automáticamente (3 en total)
+    command: >
+      bash -c "echo 'port 26379' > sentinel.conf &&
+      echo 'sentinel monitor mymaster redis-master 6379 2' >> sentinel.conf &&
+      echo 'sentinel auth-pass mymaster supersecret' >> sentinel.conf &&
+      echo 'sentinel down-after-milliseconds mymaster 5000' >> sentinel.conf &&
+      echo 'sentinel failover-timeout mymaster 10000' >> sentinel.conf &&
+      echo 'sentinel resolve-hostnames yes' >> sentinel.conf &&
+      redis-sentinel sentinel.conf"
+    networks:
+      - industrial-net
+
+  # --- TU API (Bajada de Docker Hub) ---
+  web:
+    image: dieguccio/api_deteccion_anomalias:v3.6
+    ports:
+      - "8000:8000"
+    environment:
+      - REDIS_SENTINEL_HOST=sentinel
+      - REDIS_SENTINEL_PORT=26379
+      - REDIS_MASTER_SET=mymaster
+      - REDIS_PASSWORD=supersecret
+    networks:
+      - industrial-net
+    deploy:
+      replicas: 5 
+      restart_policy:
+        condition: on-failure
+
+  # --- VISUALIZACIÓN ---
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_INSTALL_PLUGINS=redis-datasource
+    networks:
+      - industrial-net
+    deploy:
+      placement:
+        constraints: [node.role == manager]
+
+networks:
+  industrial-net:
+    driver: overlay
