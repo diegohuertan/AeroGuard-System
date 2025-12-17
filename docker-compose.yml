@@ -1,0 +1,224 @@
+version: '3.8'
+
+services:
+  # ==============================================================================
+  # ZONA 1: PLANO DE CONTROL (ZOOKEEPER CLUSTER - PRÁCTICA 3)
+  # ==============================================================================
+  zookeeper1:
+    image: zookeeper:3.9
+    container_name: zookeeper1
+    restart: always
+    ports:
+      - "2181:2181"
+    environment:
+      ZOO_MY_ID: 1
+      ZOO_SERVERS: server.1=0.0.0.0:2888:3888 server.2=zookeeper2:2888:3888 server.3=zookeeper3:2888:3888
+      ZOO_CFG_EXTRA: "clientPort=2181"
+    volumes:
+      - ./zk_data/zookeeper1/data:/data
+      - ./zk_data/zookeeper1/datalog:/datalog
+    networks:
+      - zk-network
+    healthcheck:
+      test: ["CMD", "sh", "-c", "echo ruok | nc localhost 2181 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  zookeeper2:
+    image: zookeeper:3.9
+    container_name: zookeeper2
+    restart: always
+    ports:
+      - "2182:2181"
+    environment:
+      ZOO_MY_ID: 2
+      ZOO_SERVERS: server.1=zookeeper1:2888:3888 server.2=0.0.0.0:2888:3888 server.3=zookeeper3:2888:3888
+      ZOO_CFG_EXTRA: "clientPort=2181"
+    networks:
+      - zk-network
+    volumes:
+      - ./zk_data/zookeeper2/data:/data
+      - ./zk_data/zookeeper2/datalog:/datalog
+
+  zookeeper3:
+    image: zookeeper:3.9
+    container_name: zookeeper3
+    restart: always
+    ports:
+      - "2183:2181"
+    environment:
+      ZOO_MY_ID: 3
+      ZOO_SERVERS: server.1=zookeeper1:2888:3888 server.2=zookeeper2:2888:3888 server.3=0.0.0.0:2888:3888
+      ZOO_CFG_EXTRA: "clientPort=2181"
+    networks:
+      - zk-network
+    volumes:
+      - ./zk_data/zookeeper3/data:/data
+      - ./zk_data/zookeeper3/datalog:/datalog
+
+  # ==============================================================================
+  # ZONA 2: CAPA DE APLICACIÓN (SENSORES HEXAGONALES - PRÁCTICA 3)
+  # ==============================================================================
+  sensor-1:
+    build: 
+      context: ./components/sensor_node
+    container_name: sensor-1
+    depends_on:
+      zookeeper1:
+        condition: service_healthy
+      legacy-api: # Esperamos a que la API esté lista
+        condition: service_started
+    command: ["1"]
+    environment:
+      - ZOO_HOSTS=zookeeper1:2181,zookeeper2:2181,zookeeper3:2181
+      # IMPORTANTE: Apuntamos al servicio 'legacy-api' puerto 8000
+      - API_URL=http://legacy-api:8000/mediciones
+    networks:
+      - zk-network
+
+  sensor-2:
+    build: 
+      context: ./components/sensor_node
+    container_name: sensor-2
+    depends_on:
+      zookeeper1:
+        condition: service_healthy
+    command: ["2"]
+    environment:
+      - ZOO_HOSTS=zookeeper1:2181,zookeeper2:2181,zookeeper3:2181
+      - API_URL=http://legacy-api:8000/mediciones
+    networks:
+      - zk-network
+
+  sensor-3:
+    build: 
+      context: ./components/sensor_node
+    container_name: sensor-3
+    depends_on:
+      zookeeper1:
+        condition: service_healthy
+    command: ["3"]
+    environment:
+      - ZOO_HOSTS=zookeeper1:2181,zookeeper2:2181,zookeeper3:2181
+      - API_URL=http://legacy-api:8000/mediciones
+    networks:
+      - zk-network
+
+  # ==============================================================================
+  # ZONA 3: PERSISTENCIA Y DETECCIÓN (REDIS HA + API - PRÁCTICA 2)
+  # ==============================================================================
+  
+  # --- API LEGACY (Renombrada de 'web' a 'legacy-api') ---
+  legacy-api:
+    build: 
+      context: ./components/legacy_api # <--- Ruta actualizada a la nueva estructura
+      dockerfile: Dockerfile
+    container_name: legacy-api
+    ports:
+      - "8000:8000"
+    environment:
+      - REDIS_SENTINEL_HOST=sentinel-1
+      - REDIS_SENTINEL_PORT=26379
+      - REDIS_MASTER_SET=mymaster
+      - REDIS_PASSWORD=supersecret
+    depends_on:
+      - sentinel-1
+      - sentinel-2
+      - sentinel-3
+    networks:
+      - zk-network # Unificada
+
+  # --- REDIS MASTER (TimeSeries Activado) ---
+  redis-master:
+    image: redis/redis-stack:7.2.0-v9
+    hostname: redis-master
+    container_name: redis-master
+    command: >
+      bash -c "redis-server --loadmodule /opt/redis-stack/lib/redistimeseries.so 
+      --appendonly yes --requirepass supersecret"
+    networks:
+      - zk-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "supersecret", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # --- REDIS REPLICA ---
+  redis-replica:
+    image: redis/redis-stack:7.2.0-v9
+    hostname: redis-replica
+    container_name: redis-replica
+    command: >
+      bash -c "redis-server --loadmodule /opt/redis-stack/lib/redistimeseries.so 
+      --appendonly yes --replicaof redis-master 6379 --masterauth supersecret --requirepass supersecret"
+    depends_on:
+      - redis-master
+    networks:
+      - zk-network
+
+  # --- SENTINELS (Consenso y Failover) ---
+  sentinel-1:
+    image: redis/redis-stack:7.2.0-v9
+    container_name: sentinel-1
+    command: >
+      bash -c "echo 'port 26379' > sentinel.conf &&
+      echo 'sentinel monitor mymaster redis-master 6379 2' >> sentinel.conf &&
+      echo 'sentinel auth-pass mymaster supersecret' >> sentinel.conf &&
+      echo 'sentinel down-after-milliseconds mymaster 5000' >> sentinel.conf &&
+      echo 'sentinel failover-timeout mymaster 10000' >> sentinel.conf &&
+      echo 'sentinel resolve-hostnames yes' >> sentinel.conf &&
+      redis-sentinel sentinel.conf"
+    depends_on:
+      - redis-master
+    networks:
+      - zk-network
+
+  sentinel-2:
+    image: redis/redis-stack:7.2.0-v9
+    container_name: sentinel-2
+    command: >
+      bash -c "echo 'port 26379' > sentinel.conf &&
+      echo 'sentinel monitor mymaster redis-master 6379 2' >> sentinel.conf &&
+      echo 'sentinel auth-pass mymaster supersecret' >> sentinel.conf &&
+      echo 'sentinel down-after-milliseconds mymaster 5000' >> sentinel.conf &&
+      echo 'sentinel failover-timeout mymaster 10000' >> sentinel.conf &&
+      echo 'sentinel resolve-hostnames yes' >> sentinel.conf &&
+      redis-sentinel sentinel.conf"
+    depends_on:
+      - redis-master
+    networks:
+      - zk-network
+
+  sentinel-3:
+    image: redis/redis-stack:7.2.0-v9
+    container_name: sentinel-3
+    command: >
+      bash -c "echo 'port 26379' > sentinel.conf &&
+      echo 'sentinel monitor mymaster redis-master 6379 2' >> sentinel.conf &&
+      echo 'sentinel auth-pass mymaster supersecret' >> sentinel.conf &&
+      echo 'sentinel down-after-milliseconds mymaster 5000' >> sentinel.conf &&
+      echo 'sentinel failover-timeout mymaster 10000' >> sentinel.conf &&
+      echo 'sentinel resolve-hostnames yes' >> sentinel.conf &&
+      redis-sentinel sentinel.conf"
+    depends_on:
+      - redis-master
+    networks:
+      - zk-network
+
+  # --- GRAFANA (Observabilidad) ---
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_INSTALL_PLUGINS=redis-datasource
+    networks:
+      - zk-network
+
+# Red unificada
+networks:
+  zk-network:
+    driver: bridge
