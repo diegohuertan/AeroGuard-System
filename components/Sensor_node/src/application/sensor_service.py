@@ -2,6 +2,7 @@ import logging
 import random
 import time
 import threading
+import numpy as np
 
 from src.domain.ports import IZooKeeperAdapter, IHttpApiAdapter
 
@@ -10,7 +11,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(threadName)s - %
 class SensorService:
     """
     Capa de aplicación: orquesta la lógica del nodo sensor.
-    No contiene lógica de bajo nivel (sockets, http), solo coordina los adaptadores.
+    Genera datos coherentes con los modelos de IA entrenados.
     """
     _LEADER_ROUND_INTERVAL_SECONDS = 15
     _LEADER_TIMEBOX_SECONDS = 5
@@ -61,7 +62,9 @@ class SensorService:
                 average = sum(m.valor for m in all_measurements) / len(all_measurements)
                 logging.info(f"[LÍDER] Media calculada: {average:.2f} (de {len(all_measurements)} mediciones).")
 
+                # Envío de la media agregada a la API de IA
                 self.http_adapter.send_average(average)
+                
                 logging.info(f"--- [LÍDER] Ronda finalizada. Próxima ronda en {self._LEADER_ROUND_INTERVAL_SECONDS}s. ---")
                 time.sleep(self._LEADER_ROUND_INTERVAL_SECONDS)
 
@@ -78,7 +81,21 @@ class SensorService:
             self.zk_adapter.publish_measurement(measurement)
 
     def _take_measurement(self) -> float:
-        return random.uniform(80.0, 120.0)
+        """
+        Genera una medición siguiendo una distribución normal para evitar 
+        falsos positivos constantes en los modelos de IA.
+        """
+        # Cambia loc (media) y scale (desviación) para ajustar a tu dataset de entrenamiento
+        # Si tu dataset rondaba los 50.0, estos valores son ideales.
+        val = np.random.normal(loc=50.0, scale=2.0)
+        
+        # Inyectamos una anomalía real de vez en cuando (5% de probabilidad) 
+        # para probar el sistema de votación de la API.
+        if random.random() < 0.05:
+            val += random.uniform(30.0, 50.0)
+            logging.warning(f"¡Anomalía simulada generada en nodo {self.sensor_id}!")
+
+        return round(float(val), 2)
 
     def stop(self):
         if not self._stop_event.is_set():
