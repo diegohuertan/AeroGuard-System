@@ -51,6 +51,6 @@ La persistencia se gestiona mediante una Arquitectura que permite cumplir el com
 
 ### Instrucciones de Ejecución
 
-1. **Levantar el Clúster:** Despliegue del stack completo (Zookeeper Ensemble + Sensores + Sentinel API + Redis).
+1. **Levantar el Clúster:** Despliegue del stack completo (Zookeeper Ensemble + Sensores + Sentinel API + Redis) El docker compose, esta listo para llegar y desplegar, las imagenes estan subidas en docker hub.
    ```bash
-   docker-compose up -d --build
+   docker-compose up -d

@@ -3,7 +3,6 @@ version: '3.8'
 services:
   # ==============================================================================
   # ZONA 1: PLANO DE CONTROL (ZOOKEEPER CLUSTER)
-  # Configuración canónica de la asignatura
   # ==============================================================================
   zookeeper1:
     image: zookeeper:3.9
@@ -60,12 +59,10 @@ services:
       - ./zk_data/zookeeper3/datalog:/datalog
 
   # ==============================================================================
-  # ZONA 2: CAPA DE APLICACIÓN (SENSORES HEXAGONALES - PRÁCTICA 3)
-  # Construyen el código nuevo de 'components/sensor_node'
+  # ZONA 2: CAPA DE APLICACIÓN (SENSORES - PRÁCTICA 3)
   # ==============================================================================
   sensor-1:
-    build: 
-      context: ./components/sensor_node
+    image: dieguccio/aeroguard-sensor:latest
     container_name: sensor-1
     depends_on:
       zookeeper1:
@@ -80,8 +77,7 @@ services:
       - zk-network
 
   sensor-2:
-    build: 
-      context: ./components/sensor_node
+    image: dieguccio/aeroguard-sensor:latest
     container_name: sensor-2
     depends_on:
       zookeeper1:
@@ -94,8 +90,7 @@ services:
       - zk-network
 
   sensor-3:
-    build: 
-      context: ./components/sensor_node
+    image: dieguccio/aeroguard-sensor:latest
     container_name: sensor-3
     depends_on:
       zookeeper1:
@@ -109,13 +104,9 @@ services:
 
   # ==============================================================================
   # ZONA 3: PERSISTENCIA Y DETECCIÓN (API LEGACY + REDIS HA)
-  # Integra tu Práctica 2 en el sistema distribuido
   # ==============================================================================
-  
   legacy-api:
-    build: 
-      context: ./components/Api_deteccion_anomalias
-      dockerfile: app/Dockerfile
+    image: dieguccio/sentinel-api:latest
     container_name: legacy-api
     ports:
       - "8000:8000"
