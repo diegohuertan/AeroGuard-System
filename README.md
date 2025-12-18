@@ -49,6 +49,15 @@ La persistencia se gestiona mediante una Arquitectura que permite cumplir el com
 * **IA & Backend:** Python 3.10+, Kazoo, TensorFlow, Scikit-learn, FastAPI.
 * **Observabilidad:** Grafana para el análisis forense y trazabilidad de las decisiones de la IA.
 
+# Investigaciones
+
+### tiene a libre disposicion los pdfs de las investigaciones que conforman este proyecto
+
+1. **Investigación Sentinel [Paper Setinel](PaperCientificoSentinel.pdf)
+2. **Investigación Zookeeper [Paper Zookeeper](.PaperCientificoZookeeper.pdf)
+
+
+
 ### Instrucciones de Ejecución
 
 1. **Levantar el Clúster:** Despliegue del stack completo (Zookeeper Ensemble + Sensores + Sentinel API + Redis) El docker compose, esta listo para llegar y desplegar, las imagenes estan subidas en docker hub.
